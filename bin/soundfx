@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""soundfx: Razer Surround toggle that cannot desync.
+
+State (on/off, bass) lives in ~/.local/state/soundfx/state.json. A daemon watches
+PipeWire and, on every stream/sink event, moves every app stream onto the right
+sink until reality matches the state. The CLI works without the daemon too.
+
+  soundfx toggle | on | off | bass 0|1|2 | status | reconcile | daemon
+"""
+import json, os, signal, subprocess, sys, tempfile, time, select
+
+RAZER = "effect_input.razer_surround_7_1"
+PLAIN_HINT = "analog-stereo"
+SKIP = ("effect_", "worker", "echo", "filter", "speaker-test", "soundfx")
+BASS_DB = [0.0, 3.0, 6.0]
+DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "soundfx")
+STATE, STATUS, PID = (os.path.join(DIR, n) for n in ("state.json", "status.json", "daemon.pid"))
+
+
+def run(*a, timeout=3):
+    try:
+        return subprocess.run(a, capture_output=True, text=True, timeout=timeout).stdout
+    except Exception:
+        return ""
+
+
+def pj(*a):
+    try:
+        return json.loads(run("pactl", "-f", "json", *a) or "[]")
+    except ValueError:
+        return []
+
+
+def read_state():
+    try:
+        s = json.load(open(STATE))
+    except Exception:
+        s = {}
+    return {"on": bool(s.get("on", False)), "bass": min(2, max(0, int(s.get("bass", 1))))}
+
+
+def atomic(path, data):
+    os.makedirs(DIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=DIR)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+def set_bass(db):
+    """Live gain change on the filter chain, no restart."""
+    dump = run("pw-dump", timeout=5)
+    try:
+        nodes = json.loads(dump)
+    except ValueError:
+        return False
+    for o in nodes:
+        if o.get("type") == "PipeWire:Interface:Node" and \
+           o.get("info", {}).get("props", {}).get("node.name") == RAZER:
+            run("pw-cli", "s", str(o["id"]), "Props",
+                '{ params = [ "bassL:Gain" %.1f "bassR:Gain" %.1f ] }' % (db, db))
+            return True
+    return False
+
+
+def reconcile():
+    st = read_state()
+    sinks = {s["index"]: s["name"] for s in pj("list", "sinks")}
+    razer = next((i for i, n in sinks.items() if n == RAZER), None)
+    default = run("pactl", "get-default-sink").strip()
+    plain = next((i for i, n in sinks.items() if n == default), None)
+    if plain is None or razer is None or PLAIN_HINT not in default:
+        # default is not the headset jack (HDMI, Bluetooth...) or chain is down: leave audio alone
+        status = {**st, "available": False, "synced": False, "razer": razer is not None, "ts": time.time()}
+        atomic(STATUS, status)
+        return status
+    want = razer if st["on"] else plain
+    synced = False
+    for _ in range(4):
+        bad = []
+        for s in pj("list", "sink-inputs"):
+            p = s["properties"]
+            name = (p.get("node.name", "") + p.get("application.name", "")).lower()
+            if any(k in name for k in SKIP) or s["sink"] not in (razer, plain):
+                continue
+            if s["sink"] != want:
+                run("pactl", "move-sink-input", str(s["index"]), str(want))
+                bad.append(s["index"])
+        if not bad:
+            synced = True
+            break
+        time.sleep(0.08)
+    status = {**st, "available": True, "synced": synced, "razer": True, "ts": time.time()}
+    atomic(STATUS, status)
+    return status
+
+
+def poke_daemon():
+    try:
+        os.kill(int(open(PID).read()), signal.SIGUSR1)
+        return True
+    except Exception:
+        return False
+
+
+def daemon():
+    os.makedirs(DIR, exist_ok=True)
+    open(PID, "w").write(str(os.getpid()))
+    dirty = [True]
+    rfd, wfd = os.pipe()
+    os.set_blocking(wfd, False)
+    def wake(*_):
+        dirty[0] = True
+        try:
+            os.write(wfd, b"x")
+        except OSError:
+            pass
+    signal.signal(signal.SIGUSR1, wake)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    last_bass = [None]
+    while True:
+        sub = subprocess.Popen(["pactl", "subscribe"], stdout=subprocess.PIPE, text=True, bufsize=1)
+        last = 0.0
+        while sub.poll() is None:
+            r, _, _ = select.select([sub.stdout, rfd], [], [], 2.0)
+            if rfd in r:
+                os.read(rfd, 4096)
+            if sub.stdout in r:
+                line = sub.stdout.readline()
+                if not line:
+                    break
+                if "sink-input" in line or "server" in line or (" sink " in line and ("'new'" in line or "'remove'" in line)):
+                    dirty[0] = True
+            if time.time() - last > 2.0:
+                dirty[0] = True  # safety net
+            if dirty[0]:
+                dirty[0] = False
+                time.sleep(0.03)
+                try:
+                    status = reconcile()
+                    if status["razer"] and last_bass[0] != status["bass"]:
+                        if set_bass(BASS_DB[status["bass"]]):
+                            last_bass[0] = status["bass"]
+                    if not status["razer"]:
+                        last_bass[0] = None
+                except Exception as e:
+                    print("reconcile error:", e, file=sys.stderr)
+                last = time.time()
+        time.sleep(1)  # pactl subscribe died (PipeWire restart): reconnect
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if cmd == "daemon":
+        daemon()
+        return
+    st = read_state()
+    if cmd in ("on", "off", "toggle"):
+        st["on"] = (not st["on"]) if cmd == "toggle" else cmd == "on"
+    elif cmd == "bass" and len(sys.argv) > 2:
+        st["bass"] = min(2, max(0, int(sys.argv[2])))
+    elif cmd in ("status", "reconcile"):
+        pass
+    else:
+        sys.exit(__doc__)
+    if cmd not in ("status",):
+        atomic(STATE, st)
+        if not poke_daemon():
+            s = reconcile()
+            if s["razer"]:
+                set_bass(BASS_DB[st["bass"]])
+    try:
+        print(json.dumps({**json.load(open(STATUS)), **st}))
+    except Exception:
+        print(json.dumps({**st, "available": False, "synced": False, "razer": False}))
+
+
+main()

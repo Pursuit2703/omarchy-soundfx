@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "omar.soundfx",
+  "name": "Sound FX",
+  "version": "1.0.2",
+  "author": "Pursuit2703",
+  "description": "Razer-style virtual 7.1 surround toggle with a bass control",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Sound FX",
+    "description": "Razer-style virtual 7.1 surround toggle with a bass control",
+    "category": "Audio",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  },
+  "license": "MIT"
+}

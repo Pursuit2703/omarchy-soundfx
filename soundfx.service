@@ -1,0 +1,11 @@
+[Unit]
+Description=Sound FX stream router (Razer Surround toggle)
+After=pipewire.service pipewire-pulse.service filter-chain.service
+
+[Service]
+ExecStart=%h/.local/bin/soundfx daemon
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=default.target
