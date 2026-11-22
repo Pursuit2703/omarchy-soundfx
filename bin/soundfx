@@ -7,14 +7,14 @@ sink until reality matches the state. The CLI works without the daemon too.
 
   soundfx toggle | on | off | bass 0|1|2 | status | reconcile | daemon
 """
-import json, os, signal, subprocess, sys, tempfile, time, select
+import atexit, fcntl, json, os, signal, subprocess, sys, tempfile, time, select
 
 RAZER = "effect_input.razer_surround_7_1"
 PLAIN_HINT = "analog-stereo"
 SKIP = ("effect_", "worker", "echo", "filter", "speaker-test", "soundfx")
 BASS_DB = [0.0, 3.0, 6.0]
 DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "soundfx")
-STATE, STATUS, PID = (os.path.join(DIR, n) for n in ("state.json", "status.json", "daemon.pid"))
+STATE, STATUS, PID, LOCK = (os.path.join(DIR, n) for n in ("state.json", "status.json", "daemon.pid", "lock"))
 
 
 def run(*a, timeout=3):
@@ -47,6 +47,28 @@ def atomic(path, data):
     os.replace(tmp, path)
 
 
+class lock:
+    """Serialise read-modify-write of state.json across concurrent CLI calls."""
+    def __enter__(self):
+        os.makedirs(DIR, exist_ok=True)
+        self.f = open(LOCK, "w")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+    def __exit__(self, *a):
+        self.f.close()
+
+
+_last_status = [None]
+
+
+def write_status(status):
+    """Rewrite status.json only when something other than the timestamp changed."""
+    key = {k: v for k, v in status.items() if k != "ts"}
+    if key == _last_status[0]:
+        return
+    atomic(STATUS, status)
+    _last_status[0] = key
+
+
 def set_bass(db):
     """Live gain change on the filter chain, no restart."""
     dump = run("pw-dump", timeout=5)
@@ -68,11 +90,13 @@ def reconcile():
     sinks = {s["index"]: s["name"] for s in pj("list", "sinks")}
     razer = next((i for i, n in sinks.items() if n == RAZER), None)
     default = run("pactl", "get-default-sink").strip()
+    if default == RAZER:  # user picked the virtual sink as default: route "off" to the real one
+        default = next((n for n in sinks.values() if PLAIN_HINT in n and n != RAZER), "")
     plain = next((i for i, n in sinks.items() if n == default), None)
     if plain is None or razer is None or PLAIN_HINT not in default:
         # default is not the headset jack (HDMI, Bluetooth...) or chain is down: leave audio alone
         status = {**st, "available": False, "synced": False, "razer": razer is not None, "ts": time.time()}
-        atomic(STATUS, status)
+        write_status(status)
         return status
     want = razer if st["on"] else plain
     synced = False
@@ -91,21 +115,35 @@ def reconcile():
             break
         time.sleep(0.08)
     status = {**st, "available": True, "synced": synced, "razer": True, "ts": time.time()}
-    atomic(STATUS, status)
+    write_status(status)
     return status
 
 
 def poke_daemon():
+    """Signal the daemon, but only if the PID file still names a soundfx daemon."""
     try:
-        os.kill(int(open(PID).read()), signal.SIGUSR1)
+        pid = int(open(PID).read())
+        cmd = open("/proc/%d/cmdline" % pid, "rb").read().split(b"\0")
+        if not (any(c.endswith(b"soundfx") for c in cmd) and b"daemon" in cmd):
+            return False
+        os.kill(pid, signal.SIGUSR1)
         return True
     except Exception:
         return False
 
 
+def drop_pid():
+    try:
+        if int(open(PID).read()) == os.getpid():
+            os.unlink(PID)
+    except Exception:
+        pass
+
+
 def daemon():
     os.makedirs(DIR, exist_ok=True)
     open(PID, "w").write(str(os.getpid()))
+    atexit.register(drop_pid)
     dirty = [True]
     rfd, wfd = os.pipe()
     os.set_blocking(wfd, False)
@@ -131,6 +169,8 @@ def daemon():
                     break
                 if "sink-input" in line or "server" in line or (" sink " in line and ("'new'" in line or "'remove'" in line)):
                     dirty[0] = True
+                if " sink " in line and "'new'" in line:
+                    last_bass[0] = None  # filter chain may have been recreated: re-apply bass
             if time.time() - last > 2.0:
                 dirty[0] = True  # safety net
             if dirty[0]:
@@ -154,17 +194,17 @@ def main():
     if cmd == "daemon":
         daemon()
         return
-    st = read_state()
-    if cmd in ("on", "off", "toggle"):
-        st["on"] = (not st["on"]) if cmd == "toggle" else cmd == "on"
-    elif cmd == "bass" and len(sys.argv) > 2:
-        st["bass"] = min(2, max(0, int(sys.argv[2])))
-    elif cmd in ("status", "reconcile"):
-        pass
-    else:
+    if cmd not in ("on", "off", "toggle", "bass", "status", "reconcile") or (cmd == "bass" and len(sys.argv) < 3):
         sys.exit(__doc__)
-    if cmd not in ("status",):
-        atomic(STATE, st)
+    with lock():
+        st = read_state()
+        if cmd in ("on", "off", "toggle"):
+            st["on"] = (not st["on"]) if cmd == "toggle" else cmd == "on"
+        elif cmd == "bass":
+            st["bass"] = min(2, max(0, int(sys.argv[2])))
+        if cmd != "status":
+            atomic(STATE, st)
+    if cmd != "status":
         if not poke_daemon():
             s = reconcile()
             if s["razer"]:

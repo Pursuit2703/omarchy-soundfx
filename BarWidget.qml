@@ -31,11 +31,11 @@ BarWidget {
 
   // ---- first-run setup ----------------------------------------------------
   // `omarchy plugin add` only copies files, so on first load install the backend
-  // (CLI, service, filter chain) once. Output goes to ~/.local/state/soundfx/install.log.
+  // (CLI, service, filter chain) and re-run it after a plugin update. Output goes to ~/.local/state/soundfx/install.log.
   Process {
     running: true
     command: ["bash", "-c",
-      '[ -x "$HOME/.local/bin/soundfx" ] && exit 0; ' +
+      'bash "$1/install.sh" --check && exit 0; ' +
       'mkdir -p "$HOME/.local/state/soundfx"; ' +
       'bash "$1/install.sh" >"$HOME/.local/state/soundfx/install.log" 2>&1',
       "_", root.pluginDir]

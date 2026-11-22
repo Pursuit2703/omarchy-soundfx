@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.5] - 2026-11-22
+
+### Fixed
+
+- The filter chain no longer pins the output to one machine's sound card; it follows the
+  default sink.
+- `install.sh` is re-run when the plugin changes (it writes a marker and the widget checks
+  it), retries after a failed install, and restarts only the service whose files changed.
+- The CLI only signals a PID that is really a soundfx daemon, and the daemon removes its
+  PID file on exit.
+- Concurrent `on`/`off`/`bass` calls are serialised with a lock, so one cannot undo the other.
+- Bass is re-applied whenever a new sink appears (filter chain restarted).
+- `status.json` is written only when something changed, not every 2 seconds.
+- Choosing the Razer sink as the default no longer marks audio unavailable.
+- The HRIR path is substituted without `sed`, so `&`, `#` and `\\` in a path are safe.
+
 ## [1.0.4] - 2026-11-22
 
 ### Changed
