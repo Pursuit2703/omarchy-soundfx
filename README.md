@@ -1,7 +1,7 @@
 # omar.soundfx
 
 An Omarchy bar widget that toggles virtual 7.1 surround on headphones, Razer Surround
-style. An orb in the panel switches it on and off, and a Soft / Normal / Deep control (0 / +5 / +10 dB below 100 Hz)
+style. An orb in the panel switches it on and off, and a Soft / Normal / Deep control
 sets the bass (0 / +5 / +10 dB below 100 Hz). Right-click the bar icon to toggle without opening the panel.
 
 ## How it works
