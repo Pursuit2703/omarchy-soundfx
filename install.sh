@@ -21,7 +21,13 @@ if [[ "${1:-}" == "--check" ]]; then
   exit
 fi
 
-for c in python3 pactl pw-dump pw-cli systemctl; do
+# One installer at a time (several bar instances can load the widget at once).
+mkdir -p "$state_dir"
+exec 9>"$state_dir/install.lock"
+flock 9
+if [[ -f "$marker" && "$(<"$marker")" == "$(stamp)" ]]; then exit 0; fi  # another instance finished
+
+for c in python3 pactl pw-dump pw-cli systemctl flock; do
   command -v "$c" >/dev/null || { echo "missing dependency: $c" >&2; exit 1; }
 done
 systemctl --user cat filter-chain.service >/dev/null 2>&1 || {
@@ -58,6 +64,5 @@ if (( bin_changed )) || ! systemctl --user is-active --quiet soundfx.service; th
   systemctl --user restart soundfx.service
 fi
 
-mkdir -p "$state_dir"
 stamp > "$marker"
 echo "soundfx installed. Add the Sound FX widget in your bar settings."

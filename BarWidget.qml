@@ -11,9 +11,11 @@ BarWidget {
   id: root
   moduleName: "omar.soundfx"
 
-  readonly property string pluginDir: Qt.resolvedUrl(".").toString().replace("file://", "")
+  readonly property string pluginDir: decodeURIComponent(Qt.resolvedUrl(".").toString().replace("file://", ""))
   readonly property string bin: Quickshell.env("HOME") + "/.local/bin/soundfx"
-  readonly property string statusPath: Quickshell.env("HOME") + "/.local/state/soundfx/status.json"
+  // Same state dir as bin/soundfx and install.sh: $XDG_STATE_HOME/soundfx, else ~/.local/state/soundfx.
+  readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/soundfx"
+  readonly property string statusPath: stateDir + "/status.json"
 
   // What the audio really is (from status.json) and what the UI shows.
   property bool realOn: false
@@ -31,13 +33,14 @@ BarWidget {
 
   // ---- first-run setup ----------------------------------------------------
   // `omarchy plugin add` only copies files, so on first load install the backend
-  // (CLI, service, filter chain) and re-run it after a plugin update. Output goes to ~/.local/state/soundfx/install.log.
+  // (CLI, service, filter chain) and re-run it after a plugin update. install.sh takes a lock,
+  // so several bar instances loading at once are safe. Output goes to <state dir>/install.log.
   Process {
     running: true
     command: ["bash", "-c",
       'bash "$1/install.sh" --check && exit 0; ' +
-      'mkdir -p "$HOME/.local/state/soundfx"; ' +
-      'bash "$1/install.sh" >"$HOME/.local/state/soundfx/install.log" 2>&1',
+      'd="${XDG_STATE_HOME:-$HOME/.local/state}/soundfx"; mkdir -p "$d"; ' +
+      'bash "$1/install.sh" >>"$d/install.log" 2>&1',
       "_", root.pluginDir]
   }
 
@@ -51,7 +54,9 @@ BarWidget {
       try {
         var s = JSON.parse(text())
         root.realOn = s.on === true
-        root.bass = Number(s.bass)
+        var b = Number(s.bass)
+        // Same rule as the orb: a fresh bass click wins until the status file catches up.
+        if (b >= 0 && b <= 2 && (Date.now() - root.lastBassClickMs > 1500 || b === root.bass)) root.bass = b
         root.available = s.available !== false
         root.synced = s.synced !== false
         // A fresh click wins for a moment; the status file catches up behind it.
@@ -91,14 +96,19 @@ BarWidget {
   }
 
   property int bassWant: -1
+  property int bassSent: -1
+  property double lastBassClickMs: 0
   Process {
     id: bassProc
-    onExited: if (root.bassWant >= 0 && root.bassWant !== root.bass) root.setBass(root.bassWant)
+    // A click made while the previous call was running is sent now (latest wins).
+    onExited: if (root.bassWant >= 0 && root.bassWant !== root.bassSent) root.setBass(root.bassWant)
   }
   function setBass(n) {
     bassWant = n
     bass = n
+    lastBassClickMs = Date.now()
     if (bassProc.running) return
+    bassSent = n
     bassProc.command = [root.bin, "bass", String(n)]
     bassProc.running = true
   }

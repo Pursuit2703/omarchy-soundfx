@@ -11,8 +11,10 @@ import atexit, fcntl, json, os, signal, subprocess, sys, tempfile, time, select
 
 RAZER = "effect_input.razer_surround_7_1"
 PLAIN_HINT = "analog-stereo"
-SKIP = ("effect_", "worker", "echo", "filter", "speaker-test", "soundfx")
-BASS_DB = [0.0, 3.0, 6.0]
+# Streams never routed: filter-chain outputs, Worker/echo-cancel, test tones. Prefix match on node.name.
+SKIP = ("effect_", "worker", "echo-cancel", "filter-chain", "speaker-test", "soundfx")
+BASS_DB = [0.0, 5.0, 10.0]  # Soft / Normal / Deep low-shelf boost
+SAFETY_NET_S = 10.0
 DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "soundfx")
 STATE, STATUS, PID, LOCK = (os.path.join(DIR, n) for n in ("state.json", "status.json", "daemon.pid", "lock"))
 
@@ -36,7 +38,11 @@ def read_state():
         s = json.load(open(STATE))
     except Exception:
         s = {}
-    return {"on": bool(s.get("on", False)), "bass": min(2, max(0, int(s.get("bass", 1))))}
+    try:
+        bass = min(2, max(0, int(s.get("bass", 1))))
+    except (TypeError, ValueError):
+        bass = 1
+    return {"on": bool(s.get("on", False)), "bass": bass}
 
 
 def atomic(path, data):
@@ -79,8 +85,11 @@ def set_bass(db):
     for o in nodes:
         if o.get("type") == "PipeWire:Interface:Node" and \
            o.get("info", {}).get("props", {}).get("node.name") == RAZER:
-            run("pw-cli", "s", str(o["id"]), "Props",
-                '{ params = [ "bassL:Gain" %.1f "bassR:Gain" %.1f ] }' % (db, db))
+            # Trim the mix by half the boost so Deep keeps headroom without a big loudness drop.
+            trim = 10 ** (-db / 2 / 20)
+            params = ['"bassL:Gain" %.1f' % db, '"bassR:Gain" %.1f' % db]
+            params += ['"mix%s:Gain %d" %.4f' % (side, i, trim) for side in "LR" for i in range(1, 9)]
+            run("pw-cli", "s", str(o["id"]), "Props", "{ params = [ %s ] }" % " ".join(params))
             return True
     return False
 
@@ -104,8 +113,9 @@ def reconcile():
         bad = []
         for s in pj("list", "sink-inputs"):
             p = s["properties"]
-            name = (p.get("node.name", "") + p.get("application.name", "")).lower()
-            if any(k in name for k in SKIP) or s["sink"] not in (razer, plain):
+            node = p.get("node.name", "").lower()
+            if node.startswith(SKIP) or p.get("application.name") == "speaker-test" \
+               or s["sink"] not in (razer, plain):
                 continue
             if s["sink"] != want:
                 run("pactl", "move-sink-input", str(s["index"]), str(want))
@@ -157,21 +167,28 @@ def daemon():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     last_bass = [None]
     while True:
-        sub = subprocess.Popen(["pactl", "subscribe"], stdout=subprocess.PIPE, text=True, bufsize=1)
+        # Unbuffered: select() must see every pending event, not just the first line of a burst.
+        sub = subprocess.Popen(["pactl", "subscribe"], stdout=subprocess.PIPE, bufsize=0)
+        fd = sub.stdout.fileno()
+        buf = b""
         last = 0.0
         while sub.poll() is None:
-            r, _, _ = select.select([sub.stdout, rfd], [], [], 2.0)
+            r, _, _ = select.select([fd, rfd], [], [], 2.0)
             if rfd in r:
                 os.read(rfd, 4096)
-            if sub.stdout in r:
-                line = sub.stdout.readline()
-                if not line:
+            if fd in r:
+                chunk = os.read(fd, 65536)
+                if not chunk:
                     break
-                if "sink-input" in line or "server" in line or (" sink " in line and ("'new'" in line or "'remove'" in line)):
-                    dirty[0] = True
-                if " sink " in line and "'new'" in line:
-                    last_bass[0] = None  # filter chain may have been recreated: re-apply bass
-            if time.time() - last > 2.0:
+                buf += chunk
+                *lines, buf = buf.split(b"\n")
+                for raw in lines:
+                    line = raw.decode(errors="replace")
+                    if "sink-input" in line or "server" in line or (" sink " in line and ("'new'" in line or "'remove'" in line)):
+                        dirty[0] = True
+                    if " sink " in line and "'new'" in line:
+                        last_bass[0] = None  # filter chain may have been recreated: re-apply bass
+            if time.time() - last > SAFETY_NET_S:
                 dirty[0] = True  # safety net
             if dirty[0]:
                 dirty[0] = False
@@ -194,7 +211,9 @@ def main():
     if cmd == "daemon":
         daemon()
         return
-    if cmd not in ("on", "off", "toggle", "bass", "status", "reconcile") or (cmd == "bass" and len(sys.argv) < 3):
+    if cmd not in ("on", "off", "toggle", "bass", "status", "reconcile"):
+        sys.exit(__doc__)
+    if cmd == "bass" and (len(sys.argv) < 3 or sys.argv[2] not in ("0", "1", "2")):
         sys.exit(__doc__)
     with lock():
         st = read_state()
@@ -205,7 +224,18 @@ def main():
         if cmd != "status":
             atomic(STATE, st)
     if cmd != "status":
-        if not poke_daemon():
+        if poke_daemon():
+            # Report what the daemon actually did, not the status from before the change.
+            deadline = time.time() + 1.5
+            while time.time() < deadline:
+                try:
+                    cur = json.load(open(STATUS))
+                    if cur.get("on") == st["on"] and cur.get("bass") == st["bass"]:
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.05)
+        else:
             s = reconcile()
             if s["razer"]:
                 set_bass(BASS_DB[st["bass"]])

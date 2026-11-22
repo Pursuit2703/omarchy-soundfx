@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.0.6] - 2026-11-22
+
+### Changed
+
+- Bass steps are 0 / +5 / +10 dB at 100 Hz (were 0 / +3 / +6 dB at 120 Hz, too close to
+  hear). The mix is trimmed by half the boost so Deep keeps headroom.
+- The daemon's safety-net poll runs every 10 s instead of every 2 s.
+
+### Fixed
+
+- A bass click made while the previous one was still being sent is no longer dropped.
+- A status update no longer snaps the bass picker back to the old value, or to NaN when
+  the field is missing.
+- Widget, `install.sh`, `uninstall.sh` and `bin/soundfx` all use the same state dir
+  (`$XDG_STATE_HOME/soundfx`, else `~/.local/state/soundfx`).
+- The daemon reads PipeWire events unbuffered, so a burst of events is handled at once
+  instead of up to 2 s late.
+- A corrupt `state.json` or a bad `soundfx bass` argument no longer crashes the CLI or daemon.
+- After a change, the CLI waits for the daemon and prints the real status.
+- Skipped streams are matched by `node.name` prefix, not by substring, so unrelated apps
+  are no longer excluded from surround.
+- `install.sh` takes a lock, so several bar instances cannot install at the same time; the
+  plugin path is URL-decoded.
+- `uninstall.sh` disables the widget first, so it cannot reinstall the backend.
+
 ## [1.0.5] - 2026-11-22
 
 ### Fixed
