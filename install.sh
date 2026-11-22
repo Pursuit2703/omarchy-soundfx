@@ -11,14 +11,9 @@ for c in python3 pactl pw-dump pw-cli systemctl; do
   command -v "$c" >/dev/null || { echo "missing dependency: $c" >&2; exit 1; }
 done
 
+# Use the HRIR bundled with the plugin unless you already have one (or set SOUNDFX_HRIR).
 if [[ ! -f "$hrir" ]]; then
-  cat >&2 <<EOM
-HRIR file not found: $hrir
-This plugin does not ship the Razer HRIR. Get a 14-channel HeSuVi-format
-"razer.wav" (HeSuVi: https://sourceforge.net/projects/hesuvi/), put it at the path
-above, or set SOUNDFX_HRIR=/path/to/file.wav, then run this script again.
-EOM
-  exit 1
+  install -Dm644 "$here/hrir/razer.wav" "$hrir"
 fi
 
 install -Dm755 "$here/bin/soundfx" "$HOME/.local/bin/soundfx"

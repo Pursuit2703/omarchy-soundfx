@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4] - 2026-11-22
+
+### Changed
+
+- The Razer HRIR is bundled in `hrir/razer.wav`; `install.sh` copies it into place unless
+  one exists already. No manual download.
+
 ## [1.0.3] - 2026-11-22
 
 ### Changed

@@ -20,15 +20,12 @@ sets the bass. Right-click the bar icon to toggle without opening the panel.
 `python3`, PipeWire with `pipewire-pulse`, `pactl`, `pw-dump`, `pw-cli`, systemd user
 services, and a `filter-chain.service` user unit (shipped with PipeWire).
 
-**HRIR file (not included).** The effect needs a HeSuVi-format HRIR named `razer.wav`.
-Razer's HRIR is not mine to redistribute, so get it yourself from the
-[HeSuVi](https://sourceforge.net/projects/hesuvi/) HRIR set and put it at
-`~/.config/pipewire/hrir/razer.wav` (or set `SOUNDFX_HRIR`). Check its licence before
-sharing it.
+**HRIR file.** `hrir/razer.wav` is a Razer Surround HRIR from the
+[HeSuVi](https://sourceforge.net/projects/hesuvi/) set. The installer copies it to
+`~/.config/pipewire/hrir/razer.wav` unless a file is already there. Use your own by
+putting it at that path or setting `SOUNDFX_HRIR`.
 
 ## Install
-
-Put your HRIR at `~/.config/pipewire/hrir/razer.wav` first (see above), then:
 
 ```bash
 omarchy plugin add https://github.com/Pursuit2703/omarchy-soundfx.git --enable
@@ -41,9 +38,8 @@ On first load the widget runs `install.sh`, which does the following, and nothin
 - writes the filter chain to `~/.config/pipewire/filter-chain.conf.d/` (with your HRIR path)
 - enables and restarts `filter-chain.service` (PipeWire itself is not restarted)
 
-It runs as your user, with no sudo and no sandbox. Read `install.sh` before enabling. If the
-HRIR is missing, nothing is installed and the reason is in `~/.local/state/soundfx/install.log`.
-Add the HRIR and restart the shell (or run `./install.sh` yourself).
+It runs as your user, with no sudo and no sandbox. Read `install.sh` before enabling. If setup
+fails, the reason is in `~/.local/state/soundfx/install.log`.
 
 ## Uninstall
 
@@ -58,4 +54,4 @@ omarchy plugin remove omar.soundfx
 
 ## Licence
 
-MIT. The HRIR data is not covered by it and is not included.
+MIT for the code. `hrir/razer.wav` is third-party data from the HeSuVi set and is not covered by it.
