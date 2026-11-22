@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.7] - 2026-11-22
+
+### Fixed
+
+- Turning surround off made music sound quieter: the HRIR chain was 5.7 dB louder than
+  plain stereo (measured on the same music). The surround mix is now cut by 5.5 dB, so
+  both sound equally loud.
+
 ## [1.0.6] - 2026-11-22
 
 ### Changed

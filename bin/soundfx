@@ -14,6 +14,9 @@ PLAIN_HINT = "analog-stereo"
 # Streams never routed: filter-chain outputs, Worker/echo-cancel, test tones. Prefix match on node.name.
 SKIP = ("effect_", "worker", "echo-cancel", "filter-chain", "speaker-test", "soundfx")
 BASS_DB = [0.0, 5.0, 10.0]  # Soft / Normal / Deep low-shelf boost
+# The HRIR chain measured 5.7 dB louder than plain stereo on the same music, so the
+# mix is cut by this much: turning surround on or off no longer changes the loudness.
+LEVEL_DB = -5.5
 SAFETY_NET_S = 10.0
 DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "soundfx")
 STATE, STATUS, PID, LOCK = (os.path.join(DIR, n) for n in ("state.json", "status.json", "daemon.pid", "lock"))
@@ -85,8 +88,8 @@ def set_bass(db):
     for o in nodes:
         if o.get("type") == "PipeWire:Interface:Node" and \
            o.get("info", {}).get("props", {}).get("node.name") == RAZER:
-            # Trim the mix by half the boost so Deep keeps headroom without a big loudness drop.
-            trim = 10 ** (-db / 2 / 20)
+            # Level-match to plain stereo, and trim by half the bass boost so Deep keeps headroom.
+            trim = 10 ** ((LEVEL_DB - db / 2) / 20)
             params = ['"bassL:Gain" %.1f' % db, '"bassR:Gain" %.1f' % db]
             params += ['"mix%s:Gain %d" %.4f' % (side, i, trim) for side in "LR" for i in range(1, 9)]
             run("pw-cli", "s", str(o["id"]), "Props", "{ params = [ %s ] }" % " ".join(params))
