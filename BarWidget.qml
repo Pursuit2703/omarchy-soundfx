@@ -11,6 +11,7 @@ BarWidget {
   id: root
   moduleName: "omar.soundfx"
 
+  readonly property string pluginDir: Qt.resolvedUrl(".").toString().replace("file://", "")
   readonly property string bin: Quickshell.env("HOME") + "/.local/bin/soundfx"
   readonly property string statusPath: Quickshell.env("HOME") + "/.local/state/soundfx/status.json"
 
@@ -27,6 +28,18 @@ BarWidget {
   readonly property color fg: Color.foreground
   readonly property color accent: Color.accent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+
+  // ---- first-run setup ----------------------------------------------------
+  // `omarchy plugin add` only copies files, so on first load install the backend
+  // (CLI, service, filter chain) once. Output goes to ~/.local/state/soundfx/install.log.
+  Process {
+    running: true
+    command: ["bash", "-c",
+      '[ -x "$HOME/.local/bin/soundfx" ] && exit 0; ' +
+      'mkdir -p "$HOME/.local/state/soundfx"; ' +
+      'bash "$1/install.sh" >"$HOME/.local/state/soundfx/install.log" 2>&1',
+      "_", root.pluginDir]
+  }
 
   // ---- status mirror ------------------------------------------------------
   FileView {

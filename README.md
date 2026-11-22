@@ -28,19 +28,22 @@ sharing it.
 
 ## Install
 
+Put your HRIR at `~/.config/pipewire/hrir/razer.wav` first (see above), then:
+
 ```bash
 omarchy plugin add https://github.com/Pursuit2703/omarchy-soundfx.git --enable
-cd ~/.config/omarchy/plugins/omar.soundfx && ./install.sh
 ```
 
-`install.sh` does the following, and nothing else:
+On first load the widget runs `install.sh`, which does the following, and nothing else:
 
 - copies `bin/soundfx` to `~/.local/bin/soundfx`
 - copies `soundfx.service` to `~/.config/systemd/user/` and enables it
 - writes the filter chain to `~/.config/pipewire/filter-chain.conf.d/` (with your HRIR path)
 - enables and restarts `filter-chain.service` (PipeWire itself is not restarted)
 
-It runs as your user, with no sudo and no sandbox. Read the scripts before running them.
+It runs as your user, with no sudo and no sandbox. Read `install.sh` before enabling. If the
+HRIR is missing, nothing is installed and the reason is in `~/.local/state/soundfx/install.log`.
+Add the HRIR and restart the shell (or run `./install.sh` yourself).
 
 ## Uninstall
 

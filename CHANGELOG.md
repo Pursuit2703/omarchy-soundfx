@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.3] - 2026-11-22
+
+### Changed
+
+- The widget runs `install.sh` itself on first load, so `omarchy plugin add ... --enable`
+  is the whole install. If the HRIR file is missing it stops and writes the reason to
+  `~/.local/state/soundfx/install.log`.
+
 ## [1.0.2] - 2026-11-22
 
 ### Added
